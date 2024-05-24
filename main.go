@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 	"unicode"
@@ -106,7 +105,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if detectedLang != "en" {
-		translatedText, err := translateToEnglish(m.Content)
+		translatedText, err := translateToEnglish(m.Content, detectedLang)
 		if err != nil {
 			log.Println("Error translating message,", err)
 			return
@@ -176,15 +175,55 @@ func detectLanguage(text string) (string, error) {
 	return language, nil
 }
 
-func translateToEnglish(text string) (string, error) {
-	cmd := exec.Command("trans", "-b", fmt.Sprintf(":%s", "en"), text)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
+func translateToEnglish(text string, sourceLang string) (string, error) {
+	apiUrl := os.Getenv("LIBRETRANSLATE_API_URL") + "/translate"
+	data := map[string]string{
+		"q":      text,
+		"source": sourceLang,
+		"target": "en",
+		"format": "text",
+	}
+
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out.String()), nil
+
+	req, err := http.NewRequest("POST", apiUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// Log the response body for debugging
+	log.Println("Response body:", string(body))
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+
+	translatedText, ok := result["translatedText"].(string)
+	if !ok {
+		return "", fmt.Errorf("translatedText key not found or not a string")
+	}
+
+	return translatedText, nil
 }
 
 func isOnlyEmoji(s string) bool {
