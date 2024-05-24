@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -97,7 +98,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if detectedLang != "en" {
-		translatedText, err := translateToEnglish(m.Content)
+		translatedText, err := translateToEnglish(m.Content, detectedLang)
 		if err != nil {
 			log.Println("Error translating message,", err)
 			return
@@ -132,6 +133,11 @@ func detectLanguage(text string) (string, error) {
 		return "", err
 	}
 
+	// Check if the content type is JSON
+	if !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		return "", fmt.Errorf("expected JSON response, got %s", resp.Header.Get("Content-Type"))
+	}
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", err
@@ -140,12 +146,22 @@ func detectLanguage(text string) (string, error) {
 	// Debugging: Print the response body
 	fmt.Println("Response Body:", string(body))
 
-	data, ok := result["data"].([]interface{})
-	if !ok || len(data) == 0 {
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
 		return "", fmt.Errorf("unexpected response format or empty data")
 	}
 
-	detection, ok := data[0].(map[string]interface{})
+	detections, ok := data["detections"].([]interface{})
+	if !ok || len(detections) == 0 {
+		return "", fmt.Errorf("unexpected response format or empty detections")
+	}
+
+	firstDetection, ok := detections[0].([]interface{})
+	if !ok || len(firstDetection) == 0 {
+		return "", fmt.Errorf("unexpected response format or empty first detection")
+	}
+
+	detection, ok := firstDetection[0].(map[string]interface{})
 	if !ok {
 		return "", fmt.Errorf("unexpected response format for detection")
 	}
@@ -158,21 +174,46 @@ func detectLanguage(text string) (string, error) {
 	return language, nil
 }
 
-func translateToEnglish(text string) (string, error) {
-	resp, err := http.Get(fmt.Sprintf("https://api.mymemory.translated.net/get?q=%s&langpair=auto|en", text))
+func translateToEnglish(text string, sourceLang string) (string, error) {
+	encodedText := url.QueryEscape(text)
+	resp, err := http.Get(fmt.Sprintf("https://api.mymemory.translated.net/get?q=%s&langpair=%s|en", encodedText, sourceLang))
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	// Check if the response status is not 200 OK
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return "", fmt.Errorf("unexpected response status: %d, body: %s", resp.StatusCode, string(body))
+	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	// Check if the content type is JSON
+	if !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		return "", fmt.Errorf("expected JSON response, got %s", resp.Header.Get("Content-Type"))
+	}
 
-	translatedText := result["responseData"].(map[string]interface{})["translatedText"].(string)
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+
+	// Check for the existence of responseData
+	responseData, ok := result["responseData"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("responseData key not found or not a map")
+	}
+
+	// Check for the existence of translatedText
+	translatedText, ok := responseData["translatedText"].(string)
+	if !ok {
+		return "", fmt.Errorf("translatedText key not found or not a string")
+	}
+
 	return translatedText, nil
 }
