@@ -178,6 +178,7 @@ func detectLanguage(text string) (string, error) {
 
 func translateToEnglish(text string) (string, error) {
 	cmd := exec.Command("/mnt/c/translate-shell/translate", "-b", ":en")
+
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
