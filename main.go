@@ -177,13 +177,19 @@ func detectLanguage(text string) (string, error) {
 }
 
 func translateToEnglish(text string) (string, error) {
-	cmd := exec.Command("trans", "-b", fmt.Sprintf(":%s", "en"), text)
+	cmd := exec.Command("/mnt/c/translate-shell/translate", "-b", ":en")
 	var out bytes.Buffer
+	var stderr bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	cmd.Stdin = strings.NewReader(text)
+
 	err := cmd.Run()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cmd.Run() failed with %s: %s", err, stderr.String())
 	}
+
 	return strings.TrimSpace(out.String()), nil
 }
 
